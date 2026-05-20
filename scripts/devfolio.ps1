@@ -56,8 +56,26 @@ function Devfolio-Call {
         jsonrpc = '2.0'; id = ([guid]::NewGuid().ToString('N').Substring(0,8))
         method = $Method; params = $Params
     } | ConvertTo-Json -Depth 50
-    $resp = Invoke-WebRequest -Uri $script:DevfolioUrl -Method Post -Headers $headers -Body $body -UseBasicParsing
-    return Convert-SseToJson $resp.Content
+    # PowerShell 5.1 sends bodies as Windows-1252 by default — that mangles em-dashes
+    # and other Unicode the Devfolio MCP rejects. Force UTF-8 bytes.
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+    $headers['Content-Type'] = 'application/json; charset=utf-8'
+    try {
+        $resp = Invoke-WebRequest -Uri $script:DevfolioUrl -Method Post -Headers $headers -Body $bodyBytes -UseBasicParsing
+        return Convert-SseToJson $resp.Content
+    } catch {
+        # Surface the response body on errors — needed to see MCP-level validation messages.
+        $errResp = $_.Exception.Response
+        if ($errResp) {
+            $stream = $errResp.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream)
+            $errBody = $reader.ReadToEnd()
+            $reader.Close()
+            Write-Host "HTTP error from Devfolio MCP:" -ForegroundColor Red
+            Write-Host $errBody
+        }
+        throw
+    }
 }
 
 function Devfolio-Tool {
